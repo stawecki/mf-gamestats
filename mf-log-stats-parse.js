@@ -28,34 +28,64 @@ if (!inFile || !outFile) {
 const events = JSON.parse( ""+fs.readFileSync( inFile ) );
 const unrecognised = [];
 const processed = [];
-const columns = ["time","player","action","reason","victim","weapon","newteam","teamloss","message"];
+const columns = ["time","player","action","reason","victim","weapon","newteam","teamloss","teamlead","vehicle","message"];
 
+const rmapDefault = ["player"]; // mapping regex group matches to attributes.
 const actions = [
   { name:"GameEntered", r: /(.*?) entered the game\.$/ },
+  { name:"AdminLogin", r: /(.*?) became a server administrator\.$/ },
   { name:"GameLeft", r: /(.*?) left the game\.$/ },
-  { name:"TeamSwap", r: /(.*?) is now with (.*?)$/, subject:"newteam" },
+  { name:"KillingMachine", r: /(.*?) is a one man killing machine\!$/ },
+  { name:"TeamSwap", r: /(.*?) is now with (.*?)$/, rmap:["player","newteam"] },
+
   { name:"Death", r: /(.*?) fragged himself by accident...$/, attrs:{ reason:"Accident" } },
-  { name:"Death", r: /(.*?) was blown to smitherines.$/, attrs:{ reason:"Explosion" } },
+  { name:"Death", r: /(.*?) was blown to smitherines\.$/, attrs:{ reason:"Explosion" } },
   { name:"Death", r: /(.*?) got run down by a Stray Vehicle$/, attrs:{ reason:"StrayVehicle" } },
+  { name:"Death", r: /(.*?) got run down by a stray Buggy$/, attrs:{ reason:"StrayVehicle", vehicle:"buggy" } },
+  { name:"Death", r: /(.*?) got run down by a stray Truck$/, attrs:{ reason:"StrayVehicle", vehicle:"truck" } },
+  { name:"Death", r: /(.*?) fell and killed himself\.$/, attrs:{ reason:"Fall" } },
+
   { name:"TrailerCapture", r: /(.*?) \: trailer has been captured! Driving to enemy base\!$/ },
   { name:"TrailerRestart", r: /Trailer has restarted$/ },
   { name:"FirstKill", r: /(.*?) has first kill\!$/ },
-  { name:"Frag", r: /(.*?) blew (.*?) to smithereens.$/, subject:"victim", attrs:{ weapon:"Explosives" }  },
-  { name:"Frag", r: /(.*?) gunned down (.*?).$/, subject:"victim", attrs:{ weapon:"Machinegun" }  },
-  { name:"Frag", r: /(.*?) ran down (.*?) in a (.*?).$/, subject:"victim", attrs:{ weapon:"Roadkill" }  },
-  { name:"Frag", r: /(.*?) was rocketed by (.*?).$/, subject:"victim", attrs:{ weapon:"Rocket" }  }, // TODO 1st is victim
 
-  { name:"TrailerDelivered", r: /Trailer delivered to  (.*?) Squad$/, primary:"teamloss", playerOwner: true },
-  { name:"TrailerExploded", r: /(.*?) BASE DESTROYED\!\!\!$/, playerOwner: true },
-  { r: /You were killed by (.*?)$/ },
+  { name:"Frag", r: /(.*?) blew (.*?) to smithereens.$/, attrs:{ weapon:"Explosives" }, rmap:["player","victim"] },
+  { name:"Frag", r: /(.*?) gunned down (.*?).$/, attrs:{ weapon:"Machinegun" }, rmap:["player","victim"] },
+  { name:"Frag", r: /(.*?) picked off (.*?).$/, attrs:{ weapon:"Sniper" }, rmap:["player","victim"] },
+  { name:"Frag", r: /(.*?) blasted (.*?).$/, attrs:{ weapon:"Shotgun" }, rmap:["player","victim"] },
+  { name:"Frag", r: /(.*?) tripped and detonated (.*?).$/, attrs:{ weapon:"Tripmine" }, rmap:["player","victim"] }, 
+
+  { name:"SpreeEnd", r: /(.*?)\'s killing spree was abruptly ended by (.*?)$/ },
+
+  { name:"Frag", r: /(.*?) ran down (.*?) in a (.*?).$/, attrs:{ weapon:"Roadkill" }, rmap:["player","victim","vehicle"] },
+  { name:"Frag", r: /(.*?) was rocketed by (.*?).$/, attrs:{ weapon:"Rocket" }, rmap:["victim","player"] }, 
+
+  { name:"TrailerDelivered", r: /Trailer delivered to  (.*?) Squad$/, rmap:["teamloss"], playerOwner: true },
+  { name:"TrailerExploded", r: /(.*?)OBJECTIVE ACHIEVED! - (.*?) BASE DESTROYED\!\!\!$/, rmap:["","teamloss"], playerOwner: true },
+
+  { name:"HoldoutSwitch", r: /(.*?) switched Holdout timer for (.*?) Squad$/, rmap:["player","teamlead"], playerOwner: true },
+
+  { r: /You were killed by (.*?)$/ }, // local notification
+  { r: /Commando Warfare\!$/ }, // local notification
+  { r: /(.*?) frames rendered in (.*?)$/ }, // timedemo
+
 
 ];
 
-
+let previous = null;
 events.forEach( event => {
   // skip "Inactive" state events.
   if (event.Game.gc == "Rage.Inactive") { return; }
   if (event.Type == "Scorecheck") { return; } // deal with Scorecheck later.
+  if (previous) {
+    if (event.Msg.type == previous.Msg.type &&
+        event.Msg.pn === previous.Msg.pn && 
+        event.Msg.msg === previous.Msg.msg &&
+        event.Game.et === previous.Game.et) {
+      return; // duplicate
+    }
+  }
+  previous = event;
 
   if (event.Msg) {
     // empty event (possibly start of match)
@@ -70,12 +100,18 @@ events.forEach( event => {
 
     for (var action of actions) {
       let matches = action.r.exec( event.Msg.msg );
-      if (matches && /* matches[1] !== undefined &&  */ (!action.subject || matches[2] !== undefined)) {
+      if (matches) {
          if (!action.name) { return; /* ignore action */ }
          let info = { action:action.name, player:matches[1], time:Number(event.Game.et) };
+         // map regex matches to attributes:
+         let rmap = action.rmap || rmapDefault;
+         for (var i = 0; i < rmap.length; i++) {
+             var attr = rmap[i];
+             if (attr !== "") {
+               info[ attr ] = matches[ i + 1 ];              
+             }
+         }
          if (action.playerOwner) { info.player = event.Msg.pn; }
-         if (action.primary) { info[ action.primary ] = matches[1]; }
-         if (action.subject) { info[ action.subject ] = matches[2]; }
          if (action.attrs) { info = {...info, ...action.attrs}; }
          processed.push( info );
          return;
