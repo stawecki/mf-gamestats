@@ -137,6 +137,64 @@ csvArr = csvArr.concat( processed.map( event => {
 
 fs.writeFileSync( outFile+".csv", csvArr.join("\n") );
 
+/* Summaries */
+
+let summary = {};
+let playerSummary = (playerName) => {
+  summary[ playerName ] = summary[ playerName ] || {};
+  return summary[ playerName ];
+}
+
+let lastSwitchEvent = null;
+let lastSwitchPlayer = null;
+
+processed.push({ action:"HoldoutSwitch", time: processed[ processed.length - 1 ].time });
+
+for (var event of processed) {
+  let eventPlayer = event.player ? playerSummary(event.player) : null;
+  if (event.action == "Frag") {
+    if (eventPlayer.timeToFirstKill === undefined) {
+      eventPlayer.timeToFirstKill = event.time;
+    }
+    eventPlayer.totalKills = (eventPlayer.totalKills || 0) + 1;
+
+    // count player victims:
+    eventPlayer.victims = eventPlayer.victims || {};
+    eventPlayer.victims[ event.victim ] = ( eventPlayer.victims[ event.victim ] || 0 ) + 1;
+    // count kills by weapon type:
+    eventPlayer.weaponKills = eventPlayer.weaponKills || {};
+    eventPlayer.weaponKills[ event.weapon ] = ( eventPlayer.weaponKills[ event.weapon ] || 0 ) + 1;
+
+    // count killers for victim:
+    let victimPlayer = playerSummary(event.victim);
+    victimPlayer.killers = victimPlayer.killers || {};
+    victimPlayer.killers[ event.player ] = ( victimPlayer.killers[ event.player ] || 0 ) + 1;
+  }
+  if (event.action == "HoldoutSwitch") {
+    if (lastSwitchEvent !== null && lastSwitchPlayer !== null) {
+      lastSwitchPlayer.holdoutTimeEarned = (lastSwitchPlayer.holdoutTimeEarned || 0) + (event.time - lastSwitchEvent.time);
+    }
+    if (eventPlayer) {
+      eventPlayer.holdoutSwitches = (eventPlayer.holdoutSwitches || 0) + 1;      
+    }
+    lastSwitchEvent = event;
+    lastSwitchPlayer = eventPlayer;
+  }
+  if (event.action == "Death") {
+    eventPlayer.deaths = eventPlayer.deaths || {};
+    eventPlayer.deaths[ event.reason ] = ( eventPlayer.deaths[ event.reason ] || 0 ) + 1;
+  }
+  
+}
+
+fs.writeFileSync( outFile+"summary.json", JSON.stringify(summary, null, 2) );
+
+
+
+
+
+
+
 
 
 
