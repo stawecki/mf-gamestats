@@ -147,6 +147,8 @@ let playerSummary = (playerName) => {
 
 let lastSwitchEvent = null;
 let lastSwitchPlayer = null;
+let lastCaptureEvent = null;
+let lastCapturePlayer = null;
 
 processed.push({ action:"HoldoutSwitch", time: processed[ processed.length - 1 ].time });
 
@@ -180,12 +182,35 @@ for (var event of processed) {
     lastSwitchEvent = event;
     lastSwitchPlayer = eventPlayer;
   }
+  if (event.action == "TrailerRestart") {
+    lastCaptureEvent = null;
+  }
+  if (event.action == "TrailerCapture") {
+    if (lastCaptureEvent !== null && lastCaptureEvent.player == event.player) {
+        continue; // trailer already captured by same player.
+    }
+    if (eventPlayer) {
+      eventPlayer.trailerCaptures = (eventPlayer.trailerCaptures || 0) + 1;      
+    }
+    lastCaptureEvent = event;
+  }
+  if (event.action == "TrailerDelivered") {
+    if (eventPlayer) {
+      eventPlayer.trailerDeliveries = (eventPlayer.trailerDeliveries || 0) + 1;
+      if (lastCaptureEvent !== null && lastCaptureEvent.player == event.player) {
+          let deliveryTime = event.time - lastCaptureEvent.time;
+          eventPlayer.bestTrailerRun = eventPlayer.bestTrailerRun > 0 ? Math.min(eventPlayer.bestTrailerRun, deliveryTime) : deliveryTime;
+      }
+    }
+    lastCaptureEvent = null;
+  }
   if (event.action == "Death") {
     eventPlayer.deaths = eventPlayer.deaths || {};
     eventPlayer.deaths[ event.reason ] = ( eventPlayer.deaths[ event.reason ] || 0 ) + 1;
   }
   
 }
+
 
 fs.writeFileSync( outFile+"summary.json", JSON.stringify(summary, null, 2) );
 
